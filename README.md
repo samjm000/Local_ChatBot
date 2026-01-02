@@ -15,10 +15,23 @@ A local chatbot powered by Llama 3.1 using vLLM for fast inference, with a Claud
 pip install -r requirements.txt
 ```
 
-You'll also need access to the Llama 3.1 models from Meta. Make sure you have:
-1. A Hugging Face account
-2. Accepted the Llama 3.1 license on Hugging Face
-3. Logged in via `huggingface-cli login`
+## Model Setup
+
+Place your downloaded Llama 3.1 models in the `models/` directory:
+
+```
+models/
+├── Llama-3.1-8B-Instruct/
+│   ├── config.json
+│   ├── tokenizer.json
+│   ├── model-00001-of-00004.safetensors
+│   └── ...
+└── Llama-3.1-70B-Instruct/
+    ├── config.json
+    ├── tokenizer.json
+    ├── model-00001-of-00030.safetensors
+    └── ...
+```
 
 ## Usage
 
@@ -32,14 +45,14 @@ chmod +x run.sh
 ### Using the 70B model
 
 ```bash
-MODEL=meta-llama/Llama-3.1-70B-Instruct ./run.sh
+MODEL=./models/Llama-3.1-70B-Instruct ./run.sh
 ```
 
 ### Custom configuration
 
 ```bash
 python server.py \
-    --model meta-llama/Llama-3.1-70B-Instruct \
+    --model ./models/Llama-3.1-70B-Instruct \
     --tensor-parallel-size 2 \
     --host 0.0.0.0 \
     --port 8000
@@ -49,7 +62,7 @@ python server.py \
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MODEL` | `meta-llama/Llama-3.1-8B-Instruct` | Model to use |
+| `MODEL` | `./models/Llama-3.1-8B-Instruct` | Path to local model directory |
 | `TENSOR_PARALLEL` | `2` | Number of GPUs for tensor parallelism |
 | `HOST` | `0.0.0.0` | Server host |
 | `PORT` | `8000` | Server port |
@@ -89,5 +102,5 @@ python server.py \
 - Use a smaller model
 
 ### Slow first response
-- First request downloads and loads the model
+- First request loads the model into GPU memory
 - Subsequent requests will be much faster

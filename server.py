@@ -112,9 +112,9 @@ async def lifespan(app: FastAPI):
     """Initialize the vLLM engine on startup."""
     global engine, model_name
 
-    # Get model from environment or use default
+    # Get model from environment or use default (local models directory)
     import os
-    model_name = os.environ.get("MODEL_NAME", "meta-llama/Llama-3.1-8B-Instruct")
+    model_name = os.environ.get("MODEL_NAME", "./models/Llama-3.1-8B-Instruct")
     tensor_parallel_size = int(os.environ.get("TENSOR_PARALLEL_SIZE", "2"))
 
     print(f"Loading model: {model_name}")
@@ -257,8 +257,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model",
         type=str,
-        default="meta-llama/Llama-3.1-8B-Instruct",
-        help="Model to use (e.g., meta-llama/Llama-3.1-70B-Instruct)",
+        default="./models/Llama-3.1-8B-Instruct",
+        help="Path to local model directory (e.g., ./models/Llama-3.1-70B-Instruct)",
     )
     parser.add_argument(
         "--tensor-parallel-size",

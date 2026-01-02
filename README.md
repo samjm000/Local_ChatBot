@@ -55,7 +55,7 @@ python server.py \
     --model ./models/Llama-3.1-70B-Instruct \
     --tensor-parallel-size 2 \
     --host 0.0.0.0 \
-    --port 8000
+    --port 9010
 ```
 
 ### Environment Variables
@@ -65,7 +65,7 @@ python server.py \
 | `MODEL` | `./models/Llama-3.1-8B-Instruct` | Path to local model directory |
 | `TENSOR_PARALLEL` | `2` | Number of GPUs for tensor parallelism |
 | `HOST` | `0.0.0.0` | Server host |
-| `PORT` | `8000` | Server port |
+| `PORT` | `9010` | Server port |
 
 ## API Endpoints
 

@@ -6,7 +6,7 @@
 MODEL="${MODEL:-./models/Llama-3.1-8B-Instruct}"
 TENSOR_PARALLEL="${TENSOR_PARALLEL:-2}"
 HOST="${HOST:-0.0.0.0}"
-PORT="${PORT:-8000}"
+PORT="${PORT:-9010}"
 
 # Colors for output
 GREEN='\033[0;32m'

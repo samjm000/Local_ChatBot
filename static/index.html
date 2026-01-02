@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local Llama Chat</title>
+    <style>
+        :root {
+            --bg-primary: #1a1a1a;
+            --bg-secondary: #262626;
+            --bg-tertiary: #2d2d2d;
+            --text-primary: #e5e5e5;
+            --text-secondary: #a3a3a3;
+            --text-muted: #737373;
+            --accent: #f97316;
+            --accent-dim: #ea580c;
+            --border: #404040;
+            --user-bg: #1e3a5f;
+            --assistant-bg: transparent;
+            --code-bg: #0d0d0d;
+            --scrollbar-track: #262626;
+            --scrollbar-thumb: #525252;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Roboto Mono', 'Consolas', monospace;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--scrollbar-track);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--scrollbar-thumb);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #6b6b6b;
+        }
+
+        /* Header */
+        .header {
+            background-color: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .logo {
+            color: var(--accent);
+            font-weight: bold;
+            font-size: 16px;
+        }
+
+        .model-name {
+            color: var(--text-muted);
+            font-size: 12px;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .btn {
+            background-color: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 12px;
+            transition: all 0.15s ease;
+        }
+
+        .btn:hover {
+            background-color: var(--border);
+        }
+
+        .btn-primary {
+            background-color: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background-color: var(--accent-dim);
+        }
+
+        /* Main chat area */
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+
+        .messages {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .message {
+            margin-bottom: 24px;
+            padding: 12px 16px;
+            border-radius: 6px;
+        }
+
+        .message.user {
+            background-color: var(--user-bg);
+            border-left: 3px solid var(--accent);
+        }
+
+        .message.assistant {
+            background-color: var(--assistant-bg);
+        }
+
+        .message-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        .message-role {
+            font-weight: 600;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .message-role.user {
+            color: var(--accent);
+        }
+
+        .message-role.assistant {
+            color: var(--text-secondary);
+        }
+
+        .message-content {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .message-content p {
+            margin-bottom: 12px;
+        }
+
+        .message-content p:last-child {
+            margin-bottom: 0;
+        }
+
+        /* Code blocks */
+        .message-content pre {
+            background-color: var(--code-bg);
+            padding: 12px 16px;
+            border-radius: 4px;
+            overflow-x: auto;
+            margin: 12px 0;
+            border: 1px solid var(--border);
+        }
+
+        .message-content code {
+            font-family: inherit;
+            font-size: 13px;
+        }
+
+        .message-content p code {
+            background-color: var(--code-bg);
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 13px;
+        }
+
+        /* Cursor animation */
+        .cursor {
+            display: inline-block;
+            width: 8px;
+            height: 16px;
+            background-color: var(--accent);
+            animation: blink 1s infinite;
+            vertical-align: middle;
+            margin-left: 2px;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+
+        /* Input area */
+        .input-container {
+            background-color: var(--bg-secondary);
+            border-top: 1px solid var(--border);
+            padding: 16px 20px;
+        }
+
+        .input-wrapper {
+            max-width: 900px;
+            margin: 0 auto;
+            display: flex;
+            gap: 12px;
+            align-items: flex-end;
+        }
+
+        .input-field {
+            flex: 1;
+            background-color: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 12px 16px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 14px;
+            resize: none;
+            min-height: 48px;
+            max-height: 200px;
+            line-height: 1.5;
+        }
+
+        .input-field:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .input-field::placeholder {
+            color: var(--text-muted);
+        }
+
+        .send-btn {
+            background-color: var(--accent);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 14px;
+            font-weight: 500;
+            transition: background-color 0.15s ease;
+            height: 48px;
+        }
+
+        .send-btn:hover {
+            background-color: var(--accent-dim);
+        }
+
+        .send-btn:disabled {
+            background-color: var(--border);
+            cursor: not-allowed;
+        }
+
+        /* Welcome message */
+        .welcome {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-secondary);
+        }
+
+        .welcome h1 {
+            color: var(--text-primary);
+            font-size: 24px;
+            margin-bottom: 12px;
+            font-weight: 500;
+        }
+
+        .welcome p {
+            font-size: 14px;
+            max-width: 500px;
+            margin: 0 auto;
+        }
+
+        /* Status indicator */
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #22c55e;
+        }
+
+        .status-dot.loading {
+            background-color: var(--accent);
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Loading indicator */
+        .loading-dots {
+            display: inline-flex;
+            gap: 4px;
+        }
+
+        .loading-dots span {
+            width: 6px;
+            height: 6px;
+            background-color: var(--text-muted);
+            border-radius: 50%;
+            animation: loadingDot 1.4s infinite;
+        }
+
+        .loading-dots span:nth-child(2) {
+            animation-delay: 0.2s;
+        }
+
+        .loading-dots span:nth-child(3) {
+            animation-delay: 0.4s;
+        }
+
+        @keyframes loadingDot {
+            0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
+            40% { transform: scale(1); opacity: 1; }
+        }
+
+        /* Settings panel */
+        .settings-panel {
+            display: none;
+            position: fixed;
+            top: 60px;
+            right: 20px;
+            background-color: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 16px;
+            width: 280px;
+            z-index: 100;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+
+        .settings-panel.show {
+            display: block;
+        }
+
+        .settings-group {
+            margin-bottom: 16px;
+        }
+
+        .settings-group:last-child {
+            margin-bottom: 0;
+        }
+
+        .settings-label {
+            display: block;
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .settings-input {
+            width: 100%;
+            background-color: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 8px 10px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 13px;
+        }
+
+        .settings-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="header-title">
+            <span class="logo">llama</span>
+            <span class="model-name" id="modelName">Loading...</span>
+        </div>
+        <div class="header-actions">
+            <div class="status">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Connecting...</span>
+            </div>
+            <button class="btn" id="settingsBtn">Settings</button>
+            <button class="btn btn-primary" id="newChatBtn">New Chat</button>
+        </div>
+    </header>
+
+    <div class="settings-panel" id="settingsPanel">
+        <div class="settings-group">
+            <label class="settings-label">Temperature</label>
+            <input type="number" class="settings-input" id="temperature" value="0.7" min="0" max="2" step="0.1">
+        </div>
+        <div class="settings-group">
+            <label class="settings-label">Max Tokens</label>
+            <input type="number" class="settings-input" id="maxTokens" value="2048" min="1" max="8192" step="1">
+        </div>
+        <div class="settings-group">
+            <label class="settings-label">Top P</label>
+            <input type="number" class="settings-input" id="topP" value="0.9" min="0" max="1" step="0.05">
+        </div>
+    </div>
+
+    <main class="chat-container" id="chatContainer">
+        <div class="messages" id="messages">
+            <div class="welcome">
+                <h1>Local Llama Chat</h1>
+                <p>Start a conversation with your locally running Llama model. Your messages are processed entirely on your machine.</p>
+            </div>
+        </div>
+    </main>
+
+    <footer class="input-container">
+        <div class="input-wrapper">
+            <textarea
+                class="input-field"
+                id="messageInput"
+                placeholder="Type your message... (Shift+Enter for new line)"
+                rows="1"
+            ></textarea>
+            <button class="send-btn" id="sendBtn">Send</button>
+        </div>
+    </footer>
+
+    <script>
+        // State
+        let conversationId = null;
+        let isStreaming = false;
+
+        // DOM Elements
+        const messagesContainer = document.getElementById('messages');
+        const chatContainer = document.getElementById('chatContainer');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const newChatBtn = document.getElementById('newChatBtn');
+        const settingsBtn = document.getElementById('settingsBtn');
+        const settingsPanel = document.getElementById('settingsPanel');
+        const modelName = document.getElementById('modelName');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+
+        // Settings inputs
+        const temperatureInput = document.getElementById('temperature');
+        const maxTokensInput = document.getElementById('maxTokens');
+        const topPInput = document.getElementById('topP');
+
+        // Initialize
+        async function init() {
+            try {
+                const response = await fetch('/api/info');
+                const data = await response.json();
+                modelName.textContent = data.model.split('/').pop();
+                statusDot.classList.remove('loading');
+                statusText.textContent = 'Ready';
+            } catch (error) {
+                statusText.textContent = 'Error connecting';
+                console.error('Failed to get model info:', error);
+            }
+        }
+
+        // Auto-resize textarea
+        messageInput.addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = Math.min(this.scrollHeight, 200) + 'px';
+        });
+
+        // Handle Enter key
+        messageInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        // Send button click
+        sendBtn.addEventListener('click', sendMessage);
+
+        // New chat button
+        newChatBtn.addEventListener('click', async function() {
+            conversationId = null;
+            messagesContainer.innerHTML = `
+                <div class="welcome">
+                    <h1>Local Llama Chat</h1>
+                    <p>Start a conversation with your locally running Llama model. Your messages are processed entirely on your machine.</p>
+                </div>
+            `;
+        });
+
+        // Settings toggle
+        settingsBtn.addEventListener('click', function() {
+            settingsPanel.classList.toggle('show');
+        });
+
+        // Close settings when clicking outside
+        document.addEventListener('click', function(e) {
+            if (!settingsPanel.contains(e.target) && e.target !== settingsBtn) {
+                settingsPanel.classList.remove('show');
+            }
+        });
+
+        // Format message content with basic markdown
+        function formatContent(text) {
+            // Escape HTML
+            text = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+            // Code blocks
+            text = text.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+
+            // Inline code
+            text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+            // Bold
+            text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+            // Italic
+            text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+            // Line breaks
+            text = text.replace(/\n/g, '<br>');
+
+            return text;
+        }
+
+        // Add message to chat
+        function addMessage(role, content, isStreaming = false) {
+            // Remove welcome message if present
+            const welcome = messagesContainer.querySelector('.welcome');
+            if (welcome) {
+                welcome.remove();
+            }
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${role}`;
+            messageDiv.innerHTML = `
+                <div class="message-header">
+                    <span class="message-role ${role}">${role}</span>
+                </div>
+                <div class="message-content">${formatContent(content)}${isStreaming ? '<span class="cursor"></span>' : ''}</div>
+            `;
+            messagesContainer.appendChild(messageDiv);
+            scrollToBottom();
+            return messageDiv;
+        }
+
+        // Update streaming message
+        function updateStreamingMessage(messageDiv, content) {
+            const contentDiv = messageDiv.querySelector('.message-content');
+            contentDiv.innerHTML = formatContent(content) + '<span class="cursor"></span>';
+            scrollToBottom();
+        }
+
+        // Finish streaming message
+        function finishStreamingMessage(messageDiv, content) {
+            const contentDiv = messageDiv.querySelector('.message-content');
+            contentDiv.innerHTML = formatContent(content);
+        }
+
+        // Scroll to bottom
+        function scrollToBottom() {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        // Send message
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message || isStreaming) return;
+
+            isStreaming = true;
+            sendBtn.disabled = true;
+            messageInput.value = '';
+            messageInput.style.height = 'auto';
+
+            // Add user message
+            addMessage('user', message);
+
+            // Create assistant message placeholder
+            const assistantMsg = addMessage('assistant', '', true);
+            let fullResponse = '';
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        conversation_id: conversationId,
+                        temperature: parseFloat(temperatureInput.value),
+                        max_tokens: parseInt(maxTokensInput.value),
+                        top_p: parseFloat(topPInput.value),
+                    }),
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+
+                                if (data.error) {
+                                    fullResponse += `\n\nError: ${data.error}`;
+                                    finishStreamingMessage(assistantMsg, fullResponse);
+                                    break;
+                                }
+
+                                if (data.token) {
+                                    fullResponse += data.token;
+                                    updateStreamingMessage(assistantMsg, fullResponse);
+                                }
+
+                                if (data.conversation_id) {
+                                    conversationId = data.conversation_id;
+                                }
+
+                                if (data.done) {
+                                    finishStreamingMessage(assistantMsg, fullResponse);
+                                }
+                            } catch (e) {
+                                // Ignore JSON parse errors for incomplete chunks
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                console.error('Error sending message:', error);
+                finishStreamingMessage(assistantMsg, `Error: ${error.message}`);
+            } finally {
+                isStreaming = false;
+                sendBtn.disabled = false;
+                messageInput.focus();
+            }
+        }
+
+        // Initialize on load
+        init();
+    </script>
+</body>
+</html>

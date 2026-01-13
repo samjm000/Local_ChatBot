@@ -179,6 +179,57 @@ async def generate_response(
                 yield delta
 
 
+def resolve_model_path(model_path: str) -> str:
+    """
+    Resolve the model path to an absolute path.
+
+    This ensures local paths are properly recognized by HuggingFace/vLLM
+    instead of being misinterpreted as HuggingFace repo IDs.
+    """
+    # Check if this looks like a local path (contains path separators or starts with .)
+    is_local_path = (
+        model_path.startswith('./') or
+        model_path.startswith('../') or
+        model_path.startswith('/') or
+        os.path.sep in model_path or
+        os.path.exists(model_path)
+    )
+
+    if is_local_path:
+        # Convert to absolute path to avoid HuggingFace repo ID validation issues
+        absolute_path = os.path.abspath(model_path)
+        return absolute_path
+
+    # Return as-is for HuggingFace model IDs (e.g., "meta-llama/Llama-3.1-70B")
+    return model_path
+
+
+def validate_local_model(model_path: str) -> None:
+    """
+    Validate that a local model directory exists and contains required files.
+    Raises RuntimeError with helpful message if validation fails.
+    """
+    if not os.path.exists(model_path):
+        raise RuntimeError(
+            f"Model directory not found: {model_path}\n"
+            f"Please ensure the model is downloaded to this location."
+        )
+
+    if not os.path.isdir(model_path):
+        raise RuntimeError(
+            f"Model path is not a directory: {model_path}\n"
+            f"Expected a directory containing model files."
+        )
+
+    config_path = os.path.join(model_path, "config.json")
+    if not os.path.exists(config_path):
+        raise RuntimeError(
+            f"Model config.json not found in: {model_path}\n"
+            f"This directory does not appear to contain a valid HuggingFace model.\n"
+            f"Expected to find: {config_path}"
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize the vLLM engine on startup."""
@@ -188,8 +239,15 @@ async def lifespan(app: FastAPI):
     _cleanup_done = False
 
     # Get model from environment or use default
-    model_name = os.environ.get("MODEL_NAME", "/llm_models/llama-3-1-70b")
+    raw_model_path = os.environ.get("MODEL_NAME", "/llm_models/llama-3-1-70b")
     tensor_parallel_size = int(os.environ.get("TENSOR_PARALLEL_SIZE", "2"))
+
+    # Resolve relative paths to absolute paths for proper local model detection
+    model_name = resolve_model_path(raw_model_path)
+
+    # Validate local model directory if it's a local path
+    if model_name.startswith('/'):
+        validate_local_model(model_name)
 
     print(f"Loading model: {model_name}")
     print(f"Tensor parallel size: {tensor_parallel_size}")
@@ -350,8 +408,20 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    # Resolve model path to absolute path for proper local model detection
+    resolved_model = resolve_model_path(args.model)
+
+    # Validate local model before starting server
+    if resolved_model.startswith('/'):
+        try:
+            validate_local_model(resolved_model)
+            print(f"Validated local model at: {resolved_model}")
+        except RuntimeError as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+
     # Set environment variables for the lifespan handler
-    os.environ["MODEL_NAME"] = args.model
+    os.environ["MODEL_NAME"] = resolved_model
     os.environ["TENSOR_PARALLEL_SIZE"] = str(args.tensor_parallel_size)
 
     uvicorn.run(app, host=args.host, port=args.port)

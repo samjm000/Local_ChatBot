@@ -2,8 +2,8 @@
 
 # Local Llama Chatbot Startup Script
 
-# Default values - models are stored locally in ./models/
-MODEL="${MODEL:-./models/Llama-3.1-8B-Instruct}"
+# Default values - models are stored in /llm_models/
+MODEL="${MODEL:-/llm_models/llama-3-1-70b}"
 TENSOR_PARALLEL="${TENSOR_PARALLEL:-2}"
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-9010}"

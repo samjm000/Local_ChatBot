@@ -5,7 +5,11 @@ Uses vLLM for fast inference with Llama 3.1 models
 
 import argparse
 import asyncio
+import atexit
 import json
+import os
+import signal
+import sys
 import uuid
 from typing import AsyncGenerator, Optional
 from contextlib import asynccontextmanager
@@ -23,9 +27,77 @@ from vllm.engine.async_llm_engine import AsyncLLMEngine
 # Global engine instance
 engine: Optional[AsyncLLMEngine] = None
 model_name: str = ""
+_cleanup_done: bool = False
 
 # Conversation storage (in-memory for simplicity)
 conversations: dict[str, list[dict]] = {}
+
+
+def cleanup_engine() -> None:
+    """Safely cleanup the model engine and release GPU resources."""
+    global engine, _cleanup_done
+
+    if _cleanup_done:
+        return
+
+    _cleanup_done = True
+
+    if engine is not None:
+        print("\nCleaning up model engine...")
+        try:
+            # Shutdown the engine gracefully
+            if hasattr(engine, 'shutdown'):
+                engine.shutdown()
+            elif hasattr(engine, '_engine') and hasattr(engine._engine, 'shutdown'):
+                engine._engine.shutdown()
+
+            # Clear any pending requests
+            if hasattr(engine, 'abort_all'):
+                engine.abort_all()
+
+            # Release the engine reference
+            engine = None
+
+            # Force garbage collection to release GPU memory
+            import gc
+            gc.collect()
+
+            # Try to release CUDA memory if torch is available
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                    torch.cuda.synchronize()
+            except ImportError:
+                pass
+
+            print("Model engine cleaned up successfully.")
+        except Exception as e:
+            print(f"Warning: Error during engine cleanup: {e}")
+            engine = None
+
+
+def signal_handler(signum: int, frame) -> None:
+    """Handle termination signals to ensure clean shutdown."""
+    sig_name = signal.Signals(signum).name
+    print(f"\nReceived {sig_name}, shutting down gracefully...")
+    cleanup_engine()
+    sys.exit(0)
+
+
+def setup_signal_handlers() -> None:
+    """Setup signal handlers for graceful shutdown."""
+    # Register signal handlers for common termination signals
+    signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
+    signal.signal(signal.SIGTERM, signal_handler)  # kill command
+
+    # SIGHUP is not available on Windows
+    if hasattr(signal, 'SIGHUP'):
+        signal.signal(signal.SIGHUP, signal_handler)  # terminal hangup
+
+
+# Register atexit handler for cleanup on normal exit
+atexit.register(cleanup_engine)
 
 
 class ChatMessage(BaseModel):
@@ -110,11 +182,13 @@ async def generate_response(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize the vLLM engine on startup."""
-    global engine, model_name
+    global engine, model_name, _cleanup_done
 
-    # Get model from environment or use default (local models directory)
-    import os
-    model_name = os.environ.get("MODEL_NAME", "./models/Llama-3.1-8B-Instruct")
+    # Reset cleanup flag on startup
+    _cleanup_done = False
+
+    # Get model from environment or use default
+    model_name = os.environ.get("MODEL_NAME", "/llm_models/llama-3-1-70b")
     tensor_parallel_size = int(os.environ.get("TENSOR_PARALLEL_SIZE", "2"))
 
     print(f"Loading model: {model_name}")
@@ -129,13 +203,18 @@ async def lifespan(app: FastAPI):
         gpu_memory_utilization=0.90,
     )
 
-    engine = AsyncLLMEngine.from_engine_args(engine_args)
-    print("Model loaded successfully!")
+    try:
+        engine = AsyncLLMEngine.from_engine_args(engine_args)
+        print("Model loaded successfully!")
 
-    yield
+        yield
 
-    # Cleanup
-    engine = None
+    except Exception as e:
+        print(f"Error during model lifecycle: {e}")
+        raise
+    finally:
+        # Cleanup on shutdown (normal or error)
+        cleanup_engine()
 
 
 app = FastAPI(title="Local Llama Chatbot", lifespan=lifespan)
@@ -243,7 +322,6 @@ async def new_conversation():
 
 
 # Mount static files (do this last to not override API routes)
-import os
 if os.path.exists("static"):
     app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -251,14 +329,17 @@ if os.path.exists("static"):
 if __name__ == "__main__":
     import uvicorn
 
+    # Setup signal handlers for graceful shutdown
+    setup_signal_handlers()
+
     parser = argparse.ArgumentParser(description="Local Llama Chatbot Server")
     parser.add_argument("--host", type=str, default="0.0.0.0", help="Host to bind to")
     parser.add_argument("--port", type=int, default=9010, help="Port to bind to")
     parser.add_argument(
         "--model",
         type=str,
-        default="./models/Llama-3.1-8B-Instruct",
-        help="Path to local model directory (e.g., ./models/Llama-3.1-70B-Instruct)",
+        default="/llm_models/llama-3-1-70b",
+        help="Path to local model directory (e.g., /llm_models/llama-3-1-70b)",
     )
     parser.add_argument(
         "--tensor-parallel-size",

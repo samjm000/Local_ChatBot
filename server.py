@@ -9,6 +9,7 @@ import atexit
 import json
 import os
 import signal
+import socket
 import sys
 import uuid
 from typing import AsyncGenerator, Optional
@@ -204,6 +205,18 @@ def resolve_model_path(model_path: str) -> str:
     return model_path
 
 
+def check_port_available(host: str, port: int) -> bool:
+    """Check if a port is available for binding."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind((host, port))
+        sock.close()
+        return True
+    except OSError:
+        return False
+
+
 def validate_local_model(model_path: str) -> None:
     """
     Validate that a local model directory exists and contains required files.
@@ -264,6 +277,14 @@ async def lifespan(app: FastAPI):
     try:
         engine = AsyncLLMEngine.from_engine_args(engine_args)
         print("Model loaded successfully!")
+
+        # Check if port is still available after model loading
+        # (vLLM workers might have grabbed it)
+        server_port = int(os.environ.get("SERVER_PORT", "9010"))
+        server_host = os.environ.get("SERVER_HOST", "0.0.0.0")
+        if not check_port_available(server_host, server_port):
+            print(f"WARNING: Port {server_port} became unavailable during model loading!")
+            print("This may indicate a vLLM worker process grabbed the port.")
 
         yield
 
@@ -423,5 +444,20 @@ if __name__ == "__main__":
     # Set environment variables for the lifespan handler
     os.environ["MODEL_NAME"] = resolved_model
     os.environ["TENSOR_PARALLEL_SIZE"] = str(args.tensor_parallel_size)
+
+    # Check port availability BEFORE loading the expensive model
+    if not check_port_available(args.host, args.port):
+        print(f"Error: Port {args.port} is already in use!")
+        print(f"Try one of the following:")
+        print(f"  1. Use a different port: --port {args.port + 1}")
+        print(f"  2. Find the process: lsof -i :{args.port}")
+        print(f"  3. Kill the process: fuser -k {args.port}/tcp")
+        sys.exit(1)
+
+    print(f"Port {args.port} is available, starting server...")
+
+    # Store port in env so lifespan can do a final check before yield
+    os.environ["SERVER_PORT"] = str(args.port)
+    os.environ["SERVER_HOST"] = args.host
 
     uvicorn.run(app, host=args.host, port=args.port)

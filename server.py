@@ -10,6 +10,7 @@ import json
 import os
 import signal
 import socket
+import subprocess
 import sys
 import uuid
 from typing import AsyncGenerator, Optional
@@ -215,6 +216,73 @@ def check_port_available(host: str, port: int) -> bool:
         return True
     except OSError:
         return False
+
+
+def find_available_port(host: str, start_port: int, max_attempts: int = 10) -> int:
+    """Find an available port starting from start_port."""
+    for offset in range(max_attempts):
+        port = start_port + offset
+        if check_port_available(host, port):
+            return port
+    raise RuntimeError(f"Could not find available port in range {start_port}-{start_port + max_attempts - 1}")
+
+
+def kill_process_on_port(port: int) -> bool:
+    """
+    Attempt to kill any process using the specified port.
+    Returns True if successful or no process found, False otherwise.
+    """
+    try:
+        # Try fuser first (Linux)
+        result = subprocess.run(
+            ["fuser", "-k", f"{port}/tcp"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode == 0:
+            print(f"Killed process(es) using port {port}")
+            # Give the OS a moment to release the port
+            import time
+            time.sleep(1)
+            return True
+        elif result.returncode == 1:
+            # No process found on port
+            return True
+    except FileNotFoundError:
+        # fuser not available, try alternative method
+        pass
+    except subprocess.TimeoutExpired:
+        print(f"Timeout while trying to kill process on port {port}")
+        return False
+
+    # Alternative: use lsof to find PID then kill
+    try:
+        result = subprocess.run(
+            ["lsof", "-t", "-i", f":{port}"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            pids = result.stdout.strip().split('\n')
+            for pid in pids:
+                try:
+                    subprocess.run(["kill", pid.strip()], timeout=5)
+                    print(f"Killed process {pid.strip()} using port {port}")
+                except Exception:
+                    pass
+            import time
+            time.sleep(1)
+            return True
+    except FileNotFoundError:
+        print("Neither 'fuser' nor 'lsof' available to kill existing process")
+        return False
+    except subprocess.TimeoutExpired:
+        print(f"Timeout while trying to find process on port {port}")
+        return False
+
+    return True
 
 
 def validate_local_model(model_path: str) -> None:
@@ -426,6 +494,16 @@ if __name__ == "__main__":
         default=2,
         help="Number of GPUs for tensor parallelism",
     )
+    parser.add_argument(
+        "--kill-existing",
+        action="store_true",
+        help="Kill any existing process using the port before starting",
+    )
+    parser.add_argument(
+        "--auto-port",
+        action="store_true",
+        help="Automatically find an available port if the specified port is in use",
+    )
 
     args = parser.parse_args()
 
@@ -446,18 +524,41 @@ if __name__ == "__main__":
     os.environ["TENSOR_PARALLEL_SIZE"] = str(args.tensor_parallel_size)
 
     # Check port availability BEFORE loading the expensive model
-    if not check_port_available(args.host, args.port):
-        print(f"Error: Port {args.port} is already in use!")
-        print(f"Try one of the following:")
-        print(f"  1. Use a different port: --port {args.port + 1}")
-        print(f"  2. Find the process: lsof -i :{args.port}")
-        print(f"  3. Kill the process: fuser -k {args.port}/tcp")
-        sys.exit(1)
-
-    print(f"Port {args.port} is available, starting server...")
+    port = args.port
+    if not check_port_available(args.host, port):
+        if args.kill_existing:
+            print(f"Port {port} is in use, attempting to kill existing process...")
+            if kill_process_on_port(port):
+                if check_port_available(args.host, port):
+                    print(f"Port {port} is now available")
+                else:
+                    print(f"Error: Port {port} still in use after kill attempt")
+                    sys.exit(1)
+            else:
+                print(f"Error: Failed to kill process on port {port}")
+                sys.exit(1)
+        elif args.auto_port:
+            print(f"Port {port} is in use, searching for available port...")
+            try:
+                port = find_available_port(args.host, port)
+                print(f"Found available port: {port}")
+            except RuntimeError as e:
+                print(f"Error: {e}")
+                sys.exit(1)
+        else:
+            print(f"Error: Port {port} is already in use!")
+            print(f"Try one of the following:")
+            print(f"  1. Use a different port: --port {port + 1}")
+            print(f"  2. Kill existing process: --kill-existing")
+            print(f"  3. Auto-select port: --auto-port")
+            print(f"  4. Find the process: lsof -i :{port}")
+            print(f"  5. Kill the process: fuser -k {port}/tcp")
+            sys.exit(1)
+    else:
+        print(f"Port {port} is available, starting server...")
 
     # Store port in env so lifespan can do a final check before yield
-    os.environ["SERVER_PORT"] = str(args.port)
+    os.environ["SERVER_PORT"] = str(port)
     os.environ["SERVER_HOST"] = args.host
 
-    uvicorn.run(app, host=args.host, port=args.port)
+    uvicorn.run(app, host=args.host, port=port)

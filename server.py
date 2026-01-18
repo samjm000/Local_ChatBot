@@ -10,6 +10,7 @@ import json
 import os
 import signal
 import socket
+import subprocess
 import sys
 import uuid
 from typing import AsyncGenerator, Optional
@@ -112,6 +113,8 @@ class ChatRequest(BaseModel):
     max_tokens: int = 2048
     temperature: float = 0.7
     top_p: float = 0.9
+    repetition_penalty: float = 1.0
+    system_prompt: Optional[str] = None  # Custom system prompt, uses default if not provided
 
 
 class ChatResponse(BaseModel):
@@ -126,14 +129,67 @@ You format your responses using markdown when appropriate for code, lists, and e
 Be concise but thorough in your explanations."""
 
 
-def format_prompt(messages: list[dict], model: str) -> str:
+# Context window management constants
+# Using conservative estimates: ~4 chars per token for English text
+CHARS_PER_TOKEN = 4
+MAX_CONTEXT_TOKENS = 7000  # Leave room for response within 8192 limit
+SYSTEM_PROMPT_BUFFER = 500  # Estimated tokens for system prompt + formatting
+
+
+def estimate_tokens(text: str) -> int:
+    """Estimate token count from text length (conservative estimate)."""
+    return len(text) // CHARS_PER_TOKEN
+
+
+def estimate_message_tokens(message: dict) -> int:
+    """Estimate tokens for a single message including formatting overhead."""
+    # Account for role tags and formatting: <|start_header_id|>role<|end_header_id|>\n\n....<|eot_id|>
+    overhead = 20  # Approximate token overhead for message formatting
+    return estimate_tokens(message["content"]) + overhead
+
+
+def truncate_conversation(
+    messages: list[dict],
+    max_tokens: int = MAX_CONTEXT_TOKENS
+) -> list[dict]:
+    """
+    Truncate conversation history to fit within token limit.
+
+    Strategy: Keep the most recent messages, removing oldest ones first.
+    Always preserves at least the last user message.
+    """
+    if not messages:
+        return messages
+
+    available_tokens = max_tokens - SYSTEM_PROMPT_BUFFER
+
+    # Calculate total tokens
+    total_tokens = sum(estimate_message_tokens(msg) for msg in messages)
+
+    if total_tokens <= available_tokens:
+        return messages
+
+    # Need to truncate - remove oldest messages first
+    truncated = list(messages)  # Make a copy
+
+    while len(truncated) > 1 and sum(estimate_message_tokens(msg) for msg in truncated) > available_tokens:
+        # Remove the oldest message (but keep at least one message pair if possible)
+        truncated.pop(0)
+
+    if len(truncated) < len(messages):
+        print(f"Context truncated: {len(messages)} -> {len(truncated)} messages")
+
+    return truncated
+
+
+def format_prompt(messages: list[dict], model: str, system_prompt: Optional[str] = None) -> str:
     """Format the conversation history into a prompt for Llama 3.1."""
     # Llama 3.1 chat template
     formatted = "<|begin_of_text|>"
 
-    # Add system message
+    # Add system message (use custom if provided, otherwise default)
     formatted += "<|start_header_id|>system<|end_header_id|>\n\n"
-    formatted += get_system_prompt() + "<|eot_id|>"
+    formatted += (system_prompt or get_system_prompt()) + "<|eot_id|>"
 
     # Add conversation history
     for msg in messages:
@@ -152,6 +208,7 @@ async def generate_response(
     max_tokens: int = 2048,
     temperature: float = 0.7,
     top_p: float = 0.9,
+    repetition_penalty: float = 1.0,
 ) -> AsyncGenerator[str, None]:
     """Generate a streaming response using vLLM."""
     global engine
@@ -163,6 +220,7 @@ async def generate_response(
         max_tokens=max_tokens,
         temperature=temperature,
         top_p=top_p,
+        repetition_penalty=repetition_penalty,
         stop=["<|eot_id|>", "<|end_of_text|>"],
     )
 
@@ -215,6 +273,73 @@ def check_port_available(host: str, port: int) -> bool:
         return True
     except OSError:
         return False
+
+
+def find_available_port(host: str, start_port: int, max_attempts: int = 10) -> int:
+    """Find an available port starting from start_port."""
+    for offset in range(max_attempts):
+        port = start_port + offset
+        if check_port_available(host, port):
+            return port
+    raise RuntimeError(f"Could not find available port in range {start_port}-{start_port + max_attempts - 1}")
+
+
+def kill_process_on_port(port: int) -> bool:
+    """
+    Attempt to kill any process using the specified port.
+    Returns True if successful or no process found, False otherwise.
+    """
+    try:
+        # Try fuser first (Linux)
+        result = subprocess.run(
+            ["fuser", "-k", f"{port}/tcp"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode == 0:
+            print(f"Killed process(es) using port {port}")
+            # Give the OS a moment to release the port
+            import time
+            time.sleep(1)
+            return True
+        elif result.returncode == 1:
+            # No process found on port
+            return True
+    except FileNotFoundError:
+        # fuser not available, try alternative method
+        pass
+    except subprocess.TimeoutExpired:
+        print(f"Timeout while trying to kill process on port {port}")
+        return False
+
+    # Alternative: use lsof to find PID then kill
+    try:
+        result = subprocess.run(
+            ["lsof", "-t", "-i", f":{port}"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            pids = result.stdout.strip().split('\n')
+            for pid in pids:
+                try:
+                    subprocess.run(["kill", pid.strip()], timeout=5)
+                    print(f"Killed process {pid.strip()} using port {port}")
+                except Exception:
+                    pass
+            import time
+            time.sleep(1)
+            return True
+    except FileNotFoundError:
+        print("Neither 'fuser' nor 'lsof' available to kill existing process")
+        return False
+    except subprocess.TimeoutExpired:
+        print(f"Timeout while trying to find process on port {port}")
+        return False
+
+    return True
 
 
 def validate_local_model(model_path: str) -> None:
@@ -316,10 +441,21 @@ async def serve_frontend():
 
 @app.get("/api/info")
 async def get_info():
-    """Get model information."""
+    """Get model information and default settings."""
     return {
         "model": model_name,
         "status": "ready" if engine is not None else "loading",
+        "defaults": {
+            "system_prompt": get_system_prompt(),
+            "temperature": 0.7,
+            "max_tokens": 2048,
+            "top_p": 0.9,
+            "repetition_penalty": 1.0,
+        },
+        "limits": {
+            "max_context_tokens": MAX_CONTEXT_TOKENS,
+            "max_model_len": 8192,
+        }
     }
 
 
@@ -341,8 +477,11 @@ async def chat(request: ChatRequest):
         "content": request.message
     })
 
-    # Format the prompt
-    prompt = format_prompt(conversations[conv_id], model_name)
+    # Apply context window management - truncate old messages if needed
+    truncated_messages = truncate_conversation(conversations[conv_id])
+
+    # Format the prompt with truncated history and optional custom system prompt
+    prompt = format_prompt(truncated_messages, model_name, request.system_prompt)
 
     async def stream_response():
         full_response = ""
@@ -352,6 +491,7 @@ async def chat(request: ChatRequest):
                 max_tokens=request.max_tokens,
                 temperature=request.temperature,
                 top_p=request.top_p,
+                repetition_penalty=request.repetition_penalty,
             ):
                 full_response += token
                 yield f"data: {json.dumps({'token': token, 'conversation_id': conv_id})}\n\n"
@@ -426,6 +566,16 @@ if __name__ == "__main__":
         default=2,
         help="Number of GPUs for tensor parallelism",
     )
+    parser.add_argument(
+        "--kill-existing",
+        action="store_true",
+        help="Kill any existing process using the port before starting",
+    )
+    parser.add_argument(
+        "--auto-port",
+        action="store_true",
+        help="Automatically find an available port if the specified port is in use",
+    )
 
     args = parser.parse_args()
 
@@ -446,18 +596,41 @@ if __name__ == "__main__":
     os.environ["TENSOR_PARALLEL_SIZE"] = str(args.tensor_parallel_size)
 
     # Check port availability BEFORE loading the expensive model
-    if not check_port_available(args.host, args.port):
-        print(f"Error: Port {args.port} is already in use!")
-        print(f"Try one of the following:")
-        print(f"  1. Use a different port: --port {args.port + 1}")
-        print(f"  2. Find the process: lsof -i :{args.port}")
-        print(f"  3. Kill the process: fuser -k {args.port}/tcp")
-        sys.exit(1)
-
-    print(f"Port {args.port} is available, starting server...")
+    port = args.port
+    if not check_port_available(args.host, port):
+        if args.kill_existing:
+            print(f"Port {port} is in use, attempting to kill existing process...")
+            if kill_process_on_port(port):
+                if check_port_available(args.host, port):
+                    print(f"Port {port} is now available")
+                else:
+                    print(f"Error: Port {port} still in use after kill attempt")
+                    sys.exit(1)
+            else:
+                print(f"Error: Failed to kill process on port {port}")
+                sys.exit(1)
+        elif args.auto_port:
+            print(f"Port {port} is in use, searching for available port...")
+            try:
+                port = find_available_port(args.host, port)
+                print(f"Found available port: {port}")
+            except RuntimeError as e:
+                print(f"Error: {e}")
+                sys.exit(1)
+        else:
+            print(f"Error: Port {port} is already in use!")
+            print(f"Try one of the following:")
+            print(f"  1. Use a different port: --port {port + 1}")
+            print(f"  2. Kill existing process: --kill-existing")
+            print(f"  3. Auto-select port: --auto-port")
+            print(f"  4. Find the process: lsof -i :{port}")
+            print(f"  5. Kill the process: fuser -k {port}/tcp")
+            sys.exit(1)
+    else:
+        print(f"Port {port} is available, starting server...")
 
     # Store port in env so lifespan can do a final check before yield
-    os.environ["SERVER_PORT"] = str(args.port)
+    os.environ["SERVER_PORT"] = str(port)
     os.environ["SERVER_HOST"] = args.host
 
-    uvicorn.run(app, host=args.host, port=args.port)
+    uvicorn.run(app, host=args.host, port=port)

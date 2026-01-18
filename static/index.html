@@ -360,7 +360,9 @@
             border: 1px solid var(--border);
             border-radius: 8px;
             padding: 16px;
-            width: 280px;
+            width: 340px;
+            max-height: 80vh;
+            overflow-y: auto;
             z-index: 100;
             box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
         }
@@ -369,8 +371,48 @@
             display: block;
         }
 
+        .settings-section {
+            margin-bottom: 20px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .settings-section:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+
+        .settings-section-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .settings-section-title .badge {
+            font-size: 9px;
+            padding: 2px 6px;
+            border-radius: 3px;
+            text-transform: uppercase;
+        }
+
+        .badge-live {
+            background-color: #22c55e33;
+            color: #22c55e;
+        }
+
+        .badge-restart {
+            background-color: #f9731633;
+            color: var(--accent);
+        }
+
         .settings-group {
-            margin-bottom: 16px;
+            margin-bottom: 12px;
         }
 
         .settings-group:last-child {
@@ -399,6 +441,63 @@
             outline: none;
             border-color: var(--accent);
         }
+
+        .settings-textarea {
+            width: 100%;
+            background-color: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 8px 10px;
+            color: var(--text-primary);
+            font-family: inherit;
+            font-size: 12px;
+            resize: vertical;
+            min-height: 80px;
+            line-height: 1.4;
+        }
+
+        .settings-textarea:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .settings-hint {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        .settings-row {
+            display: flex;
+            gap: 12px;
+        }
+
+        .settings-row .settings-group {
+            flex: 1;
+        }
+
+        .btn-reset {
+            background-color: transparent;
+            color: var(--text-muted);
+            border: 1px solid var(--border);
+            padding: 4px 8px;
+            font-size: 10px;
+            margin-top: 8px;
+        }
+
+        .btn-reset:hover {
+            color: var(--text-primary);
+            border-color: var(--text-muted);
+        }
+
+        .model-info {
+            font-size: 11px;
+            color: var(--text-muted);
+            background-color: var(--bg-primary);
+            padding: 8px;
+            border-radius: 4px;
+            word-break: break-all;
+        }
     </style>
 </head>
 <body>
@@ -418,17 +517,53 @@
     </header>
 
     <div class="settings-panel" id="settingsPanel">
-        <div class="settings-group">
-            <label class="settings-label">Temperature</label>
-            <input type="number" class="settings-input" id="temperature" value="0.7" min="0" max="2" step="0.1">
+        <!-- Live Settings Section -->
+        <div class="settings-section">
+            <div class="settings-section-title">
+                Generation Settings <span class="badge badge-live">Live</span>
+            </div>
+            <div class="settings-row">
+                <div class="settings-group">
+                    <label class="settings-label">Temperature</label>
+                    <input type="number" class="settings-input" id="temperature" value="0.7" min="0" max="2" step="0.1">
+                </div>
+                <div class="settings-group">
+                    <label class="settings-label">Top P</label>
+                    <input type="number" class="settings-input" id="topP" value="0.9" min="0" max="1" step="0.05">
+                </div>
+            </div>
+            <div class="settings-row">
+                <div class="settings-group">
+                    <label class="settings-label">Max Tokens</label>
+                    <input type="number" class="settings-input" id="maxTokens" value="2048" min="1" max="8192" step="1">
+                </div>
+                <div class="settings-group">
+                    <label class="settings-label">Repetition Penalty</label>
+                    <input type="number" class="settings-input" id="repetitionPenalty" value="1.0" min="1.0" max="2.0" step="0.05">
+                </div>
+            </div>
+            <div class="settings-hint">Changes apply to the next message</div>
         </div>
-        <div class="settings-group">
-            <label class="settings-label">Max Tokens</label>
-            <input type="number" class="settings-input" id="maxTokens" value="2048" min="1" max="8192" step="1">
+
+        <!-- System Prompt Section -->
+        <div class="settings-section">
+            <div class="settings-section-title">
+                System Prompt <span class="badge badge-live">Live</span>
+            </div>
+            <div class="settings-group">
+                <textarea class="settings-textarea" id="systemPrompt" rows="4" placeholder="Enter system prompt..."></textarea>
+                <div class="settings-hint">Defines the assistant's behavior. Changes apply to next message.</div>
+            </div>
+            <button class="btn btn-reset" id="resetPromptBtn">Reset to Default</button>
         </div>
-        <div class="settings-group">
-            <label class="settings-label">Top P</label>
-            <input type="number" class="settings-input" id="topP" value="0.9" min="0" max="1" step="0.05">
+
+        <!-- Model Info Section -->
+        <div class="settings-section">
+            <div class="settings-section-title">
+                Model <span class="badge badge-restart">Requires Restart</span>
+            </div>
+            <div class="model-info" id="modelPath">Loading...</div>
+            <div class="settings-hint">To change model, restart server with --model flag</div>
         </div>
     </div>
 
@@ -457,6 +592,7 @@
         // State
         let conversationId = null;
         let isStreaming = false;
+        let defaultSystemPrompt = '';
 
         // DOM Elements
         const messagesContainer = document.getElementById('messages');
@@ -467,6 +603,7 @@
         const settingsBtn = document.getElementById('settingsBtn');
         const settingsPanel = document.getElementById('settingsPanel');
         const modelName = document.getElementById('modelName');
+        const modelPath = document.getElementById('modelPath');
         const statusDot = document.getElementById('statusDot');
         const statusText = document.getElementById('statusText');
 
@@ -474,13 +611,30 @@
         const temperatureInput = document.getElementById('temperature');
         const maxTokensInput = document.getElementById('maxTokens');
         const topPInput = document.getElementById('topP');
+        const repetitionPenaltyInput = document.getElementById('repetitionPenalty');
+        const systemPromptInput = document.getElementById('systemPrompt');
+        const resetPromptBtn = document.getElementById('resetPromptBtn');
 
         // Initialize
         async function init() {
             try {
                 const response = await fetch('/api/info');
                 const data = await response.json();
+
+                // Update model display
                 modelName.textContent = data.model.split('/').pop();
+                modelPath.textContent = data.model;
+
+                // Load default settings
+                if (data.defaults) {
+                    defaultSystemPrompt = data.defaults.system_prompt;
+                    systemPromptInput.value = defaultSystemPrompt;
+                    temperatureInput.value = data.defaults.temperature;
+                    maxTokensInput.value = data.defaults.max_tokens;
+                    topPInput.value = data.defaults.top_p;
+                    repetitionPenaltyInput.value = data.defaults.repetition_penalty;
+                }
+
                 statusDot.classList.remove('loading');
                 statusText.textContent = 'Ready';
             } catch (error) {
@@ -488,6 +642,11 @@
                 console.error('Failed to get model info:', error);
             }
         }
+
+        // Reset system prompt to default
+        resetPromptBtn.addEventListener('click', function() {
+            systemPromptInput.value = defaultSystemPrompt;
+        });
 
         // Auto-resize textarea
         messageInput.addEventListener('input', function() {
@@ -609,6 +768,10 @@
             let fullResponse = '';
 
             try {
+                // Get system prompt (use null if unchanged from default to use server default)
+                const customPrompt = systemPromptInput.value.trim();
+                const systemPrompt = customPrompt !== defaultSystemPrompt ? customPrompt : null;
+
                 const response = await fetch('/api/chat', {
                     method: 'POST',
                     headers: {
@@ -620,6 +783,8 @@
                         temperature: parseFloat(temperatureInput.value),
                         max_tokens: parseInt(maxTokensInput.value),
                         top_p: parseFloat(topPInput.value),
+                        repetition_penalty: parseFloat(repetitionPenaltyInput.value),
+                        system_prompt: systemPrompt,
                     }),
                 });
 

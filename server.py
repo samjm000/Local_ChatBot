@@ -113,6 +113,8 @@ class ChatRequest(BaseModel):
     max_tokens: int = 2048
     temperature: float = 0.7
     top_p: float = 0.9
+    repetition_penalty: float = 1.0
+    system_prompt: Optional[str] = None  # Custom system prompt, uses default if not provided
 
 
 class ChatResponse(BaseModel):
@@ -180,14 +182,14 @@ def truncate_conversation(
     return truncated
 
 
-def format_prompt(messages: list[dict], model: str) -> str:
+def format_prompt(messages: list[dict], model: str, system_prompt: Optional[str] = None) -> str:
     """Format the conversation history into a prompt for Llama 3.1."""
     # Llama 3.1 chat template
     formatted = "<|begin_of_text|>"
 
-    # Add system message
+    # Add system message (use custom if provided, otherwise default)
     formatted += "<|start_header_id|>system<|end_header_id|>\n\n"
-    formatted += get_system_prompt() + "<|eot_id|>"
+    formatted += (system_prompt or get_system_prompt()) + "<|eot_id|>"
 
     # Add conversation history
     for msg in messages:
@@ -206,6 +208,7 @@ async def generate_response(
     max_tokens: int = 2048,
     temperature: float = 0.7,
     top_p: float = 0.9,
+    repetition_penalty: float = 1.0,
 ) -> AsyncGenerator[str, None]:
     """Generate a streaming response using vLLM."""
     global engine
@@ -217,6 +220,7 @@ async def generate_response(
         max_tokens=max_tokens,
         temperature=temperature,
         top_p=top_p,
+        repetition_penalty=repetition_penalty,
         stop=["<|eot_id|>", "<|end_of_text|>"],
     )
 
@@ -437,10 +441,21 @@ async def serve_frontend():
 
 @app.get("/api/info")
 async def get_info():
-    """Get model information."""
+    """Get model information and default settings."""
     return {
         "model": model_name,
         "status": "ready" if engine is not None else "loading",
+        "defaults": {
+            "system_prompt": get_system_prompt(),
+            "temperature": 0.7,
+            "max_tokens": 2048,
+            "top_p": 0.9,
+            "repetition_penalty": 1.0,
+        },
+        "limits": {
+            "max_context_tokens": MAX_CONTEXT_TOKENS,
+            "max_model_len": 8192,
+        }
     }
 
 
@@ -465,8 +480,8 @@ async def chat(request: ChatRequest):
     # Apply context window management - truncate old messages if needed
     truncated_messages = truncate_conversation(conversations[conv_id])
 
-    # Format the prompt with truncated history
-    prompt = format_prompt(truncated_messages, model_name)
+    # Format the prompt with truncated history and optional custom system prompt
+    prompt = format_prompt(truncated_messages, model_name, request.system_prompt)
 
     async def stream_response():
         full_response = ""
@@ -476,6 +491,7 @@ async def chat(request: ChatRequest):
                 max_tokens=request.max_tokens,
                 temperature=request.temperature,
                 top_p=request.top_p,
+                repetition_penalty=request.repetition_penalty,
             ):
                 full_response += token
                 yield f"data: {json.dumps({'token': token, 'conversation_id': conv_id})}\n\n"

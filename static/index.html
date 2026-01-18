@@ -498,6 +498,36 @@
             border-radius: 4px;
             word-break: break-all;
         }
+
+        /* Quick actions bar */
+        .input-actions {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 8px;
+            flex-wrap: wrap;
+        }
+
+        .action-btn {
+            background-color: var(--bg-tertiary);
+            color: var(--text-secondary);
+            border: 1px solid var(--border);
+            padding: 4px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-family: inherit;
+            font-size: 11px;
+            transition: all 0.15s ease;
+        }
+
+        .action-btn:hover {
+            background-color: var(--border);
+            color: var(--text-primary);
+        }
+
+        .action-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
     </style>
 </head>
 <body>
@@ -578,13 +608,18 @@
 
     <footer class="input-container">
         <div class="input-wrapper">
-            <textarea
-                class="input-field"
-                id="messageInput"
-                placeholder="Type your message... (Shift+Enter for new line)"
-                rows="1"
-            ></textarea>
-            <button class="send-btn" id="sendBtn">Send</button>
+            <div class="input-actions">
+                <button class="action-btn" id="resetFormatBtn" title="Tell the model to respond naturally, not in a specific format">Reset Format</button>
+            </div>
+            <div style="display: flex; gap: 12px; align-items: flex-end; width: 100%;">
+                <textarea
+                    class="input-field"
+                    id="messageInput"
+                    placeholder="Type your message... (Shift+Enter for new line)"
+                    rows="1"
+                ></textarea>
+                <button class="send-btn" id="sendBtn">Send</button>
+            </div>
         </div>
     </footer>
 
@@ -614,6 +649,7 @@
         const repetitionPenaltyInput = document.getElementById('repetitionPenalty');
         const systemPromptInput = document.getElementById('systemPrompt');
         const resetPromptBtn = document.getElementById('resetPromptBtn');
+        const resetFormatBtn = document.getElementById('resetFormatBtn');
 
         // Initialize
         async function init() {
@@ -646,6 +682,20 @@
         // Reset system prompt to default
         resetPromptBtn.addEventListener('click', function() {
             systemPromptInput.value = defaultSystemPrompt;
+        });
+
+        // Reset format - send a message to reset formatting expectations
+        resetFormatBtn.addEventListener('click', function() {
+            if (isStreaming || !conversationId) {
+                // No active conversation or currently streaming
+                if (!conversationId) {
+                    alert('Start a conversation first before resetting format.');
+                }
+                return;
+            }
+            // Set the input to a format reset instruction
+            messageInput.value = 'From now on, please respond in natural conversational language. Ignore any previous formatting instructions (JSON, tables, specific structures, etc.) and just answer normally.';
+            messageInput.focus();
         });
 
         // Auto-resize textarea

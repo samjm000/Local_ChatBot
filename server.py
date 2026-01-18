@@ -127,6 +127,59 @@ You format your responses using markdown when appropriate for code, lists, and e
 Be concise but thorough in your explanations."""
 
 
+# Context window management constants
+# Using conservative estimates: ~4 chars per token for English text
+CHARS_PER_TOKEN = 4
+MAX_CONTEXT_TOKENS = 7000  # Leave room for response within 8192 limit
+SYSTEM_PROMPT_BUFFER = 500  # Estimated tokens for system prompt + formatting
+
+
+def estimate_tokens(text: str) -> int:
+    """Estimate token count from text length (conservative estimate)."""
+    return len(text) // CHARS_PER_TOKEN
+
+
+def estimate_message_tokens(message: dict) -> int:
+    """Estimate tokens for a single message including formatting overhead."""
+    # Account for role tags and formatting: <|start_header_id|>role<|end_header_id|>\n\n....<|eot_id|>
+    overhead = 20  # Approximate token overhead for message formatting
+    return estimate_tokens(message["content"]) + overhead
+
+
+def truncate_conversation(
+    messages: list[dict],
+    max_tokens: int = MAX_CONTEXT_TOKENS
+) -> list[dict]:
+    """
+    Truncate conversation history to fit within token limit.
+
+    Strategy: Keep the most recent messages, removing oldest ones first.
+    Always preserves at least the last user message.
+    """
+    if not messages:
+        return messages
+
+    available_tokens = max_tokens - SYSTEM_PROMPT_BUFFER
+
+    # Calculate total tokens
+    total_tokens = sum(estimate_message_tokens(msg) for msg in messages)
+
+    if total_tokens <= available_tokens:
+        return messages
+
+    # Need to truncate - remove oldest messages first
+    truncated = list(messages)  # Make a copy
+
+    while len(truncated) > 1 and sum(estimate_message_tokens(msg) for msg in truncated) > available_tokens:
+        # Remove the oldest message (but keep at least one message pair if possible)
+        truncated.pop(0)
+
+    if len(truncated) < len(messages):
+        print(f"Context truncated: {len(messages)} -> {len(truncated)} messages")
+
+    return truncated
+
+
 def format_prompt(messages: list[dict], model: str) -> str:
     """Format the conversation history into a prompt for Llama 3.1."""
     # Llama 3.1 chat template
@@ -409,8 +462,11 @@ async def chat(request: ChatRequest):
         "content": request.message
     })
 
-    # Format the prompt
-    prompt = format_prompt(conversations[conv_id], model_name)
+    # Apply context window management - truncate old messages if needed
+    truncated_messages = truncate_conversation(conversations[conv_id])
+
+    # Format the prompt with truncated history
+    prompt = format_prompt(truncated_messages, model_name)
 
     async def stream_response():
         full_response = ""
